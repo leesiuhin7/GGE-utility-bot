@@ -3,6 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 import asyncio
 import os
+import threading
 from flask import Flask, Response
 
 from server_comm import AttackListener, StormFort, Info
@@ -124,6 +125,7 @@ async def on_ready() -> None:
 
 
 def start_flask_server() -> None:
+    print("st")
     app = Flask(__name__)
 
     app.add_url_rule(
@@ -131,7 +133,11 @@ def start_flask_server() -> None:
         endpoint="respond",
         view_func=lambda: Response(status=200)
     )
-    app.run(host="0.0.0.0", port=PORT)
+    server_thread = threading.Thread(
+        target=app.run,
+        kwargs={"host": "0.0.0.0", "port": PORT}
+    )
+    server_thread.start()
 
 
 
@@ -142,9 +148,10 @@ async def main() -> None:
 
     await attack_listener.start()
 
+    start_flask_server()
+
     async with bot:
         await bot.start(TOKEN)
-        start_flask_server()
 
     await attack_listener.cancel()
 
