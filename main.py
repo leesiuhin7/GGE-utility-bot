@@ -145,10 +145,8 @@ async def main() -> None:
     async with bot:
         await bot.start(TOKEN)
         start_flask_server()
-        while True:
-            await asyncio.sleep(100)
 
-    attack_listener.cancel()
+    await attack_listener.cancel()
 
 
 if __name__ == "__main__":
