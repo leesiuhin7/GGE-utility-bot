@@ -125,7 +125,6 @@ async def on_ready() -> None:
 
 
 def start_flask_server() -> None:
-    print("st")
     app = Flask(__name__)
 
     app.add_url_rule(

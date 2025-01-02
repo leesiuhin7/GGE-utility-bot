@@ -207,6 +207,7 @@ class StormFort:
             "message": message
         }
         response = await post(self.url, data)
+        print(response)
 
         if response is None:
             return []
