@@ -13,6 +13,7 @@ from _channel_ids import get_channel_ids
 
 TOKEN: str = os.environ.get("DISCORD_TOKEN", "")
 SERVER_URL: str = os.environ.get("SERVER_URL", "")
+
 PORT: int = int(os.environ.get("PORT", 10000))
 channel_ids = get_channel_ids()
 
@@ -63,14 +64,14 @@ async def background_msg_loop() -> None:
     ),
     search_dist=(
         "Maximum horizontal / vertical distance of search, "
-        "max value: 100"
+        "max value: 50"
     )
 )
 async def find_storm_forts(
     interaction: discord.Interaction,
     center: str,
     criterias: str = "",
-    search_dist: int = 50
+    search_dist: int = 20
 ) -> None:
     
     # Get index from channel id + check authorization
@@ -96,7 +97,7 @@ async def find_storm_forts(
     info_text_list = await storm_fort.search(
         client_index, 
         center=center,
-        dist=min(search_dist, 100),
+        dist=min(search_dist, 50),
         criterias=criteria_list
     )
 

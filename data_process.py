@@ -1,4 +1,5 @@
 import json
+import math
 from typing import Any
 
 
@@ -193,7 +194,17 @@ class _StormFort:
             output_texts.append("\n".join(info_texts))
 
         return output_texts
+    
 
+    def sort_storm_forts(
+        self, 
+        storm_forts: list[tuple[int, int, int]],
+        center: tuple[int, int]
+    ) -> list[tuple[int, int, int]]:
+        
+        dist_func = lambda data: math.dist(center, data[:2])
+        
+        return sorted(storm_forts, key=dist_func)
 
 
     def _unpack_data(
@@ -214,6 +225,7 @@ class _StormFort:
             strength_type
         )
         return info
+    
 
 
 attack_warning = _AttackWarning()

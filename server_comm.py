@@ -178,7 +178,14 @@ class StormFort:
             if storm_fort_info[2] in new_criterias:
                 selected_storm_forts.append(storm_fort_info)
 
-        text = storm_fort.format_storm_forts(selected_storm_forts, 40)
+        sorted_storm_forts = storm_fort.sort_storm_forts(
+            selected_storm_forts,
+            (x, y)
+        )
+        text = storm_fort.format_storm_forts(
+            sorted_storm_forts, 
+            40
+        )
         return text
 
 
@@ -207,7 +214,6 @@ class StormFort:
             "message": message
         }
         response = await post(self.url, data)
-        print(response)
 
         if response is None:
             return []
