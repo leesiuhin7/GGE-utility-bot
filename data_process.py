@@ -215,7 +215,7 @@ class _StormFort:
         if data[0] != 25:
             return
         
-        if data[7] != 8:
+        if data[6] != 0:
             return
         
         x_pos = data[1]
