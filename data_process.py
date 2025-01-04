@@ -215,6 +215,9 @@ class _StormFort:
         if data[0] != 25:
             return
         
+        if data[7] != 8:
+            return
+        
         x_pos = data[1]
         y_pos = data[2]
         strength_type = data[5]
