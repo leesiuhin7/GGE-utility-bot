@@ -162,15 +162,30 @@ class StormFort:
         if len(coords) != 2:
             return []
         else:
-            x = int(coords[0])
-            y = int(coords[1])
+            center_x = int(coords[0])
+            center_y = int(coords[1])
 
-        bbox = (x - dist, y - dist, x + dist, y + dist)
+        n =  - (dist // -13) # ceiling division
+        if n <= 0:
+            return []
+        
+        offsets = []
+        for x in range(-n, n):
+            for y in range(-n, n):
+                offsets.append((x, y))
 
-        storm_fort_list = await self._get_storm_fort_data(
-            client_index,
-            bbox=bbox
-        )
+        storm_fort_list = []
+        for i, j in offsets:
+            x = center_x + i * 13
+            y = center_y + j * 13
+            bbox = (x, y, x + 12, y + 12)
+
+            storm_fort_list.extend(
+                await self._get_storm_fort_data(
+                    client_index,
+                    bbox=bbox
+                )
+            )
 
         selected_storm_forts = []
 
@@ -180,7 +195,7 @@ class StormFort:
 
         sorted_storm_forts = storm_fort.sort_storm_forts(
             selected_storm_forts,
-            (x, y)
+            (center_x, center_y)
         )
         text = storm_fort.format_storm_forts(
             sorted_storm_forts, 
