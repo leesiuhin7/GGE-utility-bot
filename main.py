@@ -155,6 +155,9 @@ async def main() -> None:
 
     await attack_listener.cancel()
 
+    while True:
+        await asyncio.sleep(10)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
