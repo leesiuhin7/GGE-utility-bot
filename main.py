@@ -98,9 +98,10 @@ async def toggle_connection() -> Response:
         abort(415)
 
     data = request.get_json()
-
     otp = data.get("otp")
-    if otp != totp.now():
+
+    real_otp = await asyncio.to_thread(totp.now)
+    if otp != real_otp:
         return abort(401)
     
     response = await puppet_manager.toggle_connection()
