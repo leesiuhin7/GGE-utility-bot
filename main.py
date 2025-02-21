@@ -1,162 +1,131 @@
-import discord
-from discord.ext import commands
-from discord import app_commands
+from flask import Flask, request, abort, jsonify, Response
+from asgiref.wsgi import WsgiToAsgi
 import asyncio
 import os
-import threading
-from flask import Flask, Response
+import uvicorn
+import pyotp
 
-from server_comm import AttackListener, StormFort, Info
-from _channel_ids import get_channel_ids
-
-
-
-TOKEN: str = os.environ.get("DISCORD_TOKEN", "")
-SERVER_URL: str = os.environ.get("SERVER_URL", "")
-
-PORT: int = int(os.environ.get("PORT", 10000))
-channel_ids = get_channel_ids()
-
-message_queue: list[tuple[str, int]] = []
-
-attack_listener = AttackListener(message_queue)
-storm_fort = StormFort()
-
-intents = discord.Intents.default()
-intents.message_content = True
-intents.members = True
-
-bot = commands.Bot(
-    command_prefix="!",
-    intents=intents
-)
-
-async def send_message() -> None:
-    message, index = message_queue.pop(0)
-    channel = bot.get_channel(channel_ids[index][0])
-
-    if not hasattr(channel, "send"):
-        return
-    
-    await channel.send(message) # type: ignore
+from puppet_client import Manager
+from _config import get_config
 
 
-async def background_msg_loop() -> None:
-    while not bot.is_closed():
-        if len(message_queue) > 0:
-            await send_message()
-
-        await asyncio.sleep(1)
+totp = pyotp.TOTP(os.environ.get("KEY", ""))
+puppet_manager = Manager()
+app = Flask(__name__)
 
 
-@bot.tree.command(
-    name="storm_fort",
-    description="Find storm forts on the map based on criterias"
-)
-@app_commands.describe(
-    center=(
-        "The center of search, "
-        "format: {x position}:{y position}"
-    ),
-    criterias=(
-        "Select criterias seperated by spaces, "
-        "options: [lvl] 40, 50, 60, 70, 80"
-    ),
-    search_dist=(
-        "Maximum horizontal / vertical distance of search, "
-        "max value: 500"
+@app.route("/send", methods=["POST"])
+async def request_send_msg() -> Response:
+    if not request.is_json:
+        abort(415)
+
+    data = request.get_json()
+
+    client_index = data.get("client_index")
+    message = data.get("message")
+
+    if client_index is None:
+        abort(400)
+    elif message is None:
+        abort(400)
+
+    response = await puppet_manager.send_request(
+        client_index,
+        message=message
     )
-)
-async def find_storm_forts(
-    interaction: discord.Interaction,
-    center: str,
-    criterias: str = "",
-    search_dist: int = 50
-) -> None:
-    
-    # Get index from channel id + check authorization
-    channel_id = interaction.channel_id
+    if response is None:
+        abort(403)
 
-    client_index = -1
-    for i, valid_ids in enumerate(channel_ids):
-        if channel_id in valid_ids:
-            client_index = i
-            break
+    json_response = jsonify(response)
+    return json_response
 
-    if client_index == -1:
-        await interaction.response.send_message(
-            "This channel is not authorized.",
-            ephemeral=True
-        )
-        return
-    
-    await interaction.response.defer(ephemeral=True)
-    
-    criteria_list = criterias.split(" ")
 
-    info_text_list = await storm_fort.search(
+@app.route("/search", methods=["POST"])
+async def request_search_response() -> Response:
+    if not request.is_json:
+        abort(415)
+
+    data = request.get_json()
+
+    client_index = data.get("client_index")
+    start_index = data.get("index")
+    response_format = data.get("format")
+
+    if not isinstance(client_index, int):
+        abort(400)
+    elif not isinstance(start_index, int):
+        abort(400)
+    elif not isinstance(response_format, str):
+        abort(400)
+
+    response = await puppet_manager.search_responses(
+        client_index,
+        start_index=start_index,
+        response_format=response_format
+    )
+    json_response = jsonify(response)
+
+    return json_response
+
+
+@app.route("/get", methods=["POST"])
+async def request_get_info() -> Response:
+    if not request.is_json:
+        abort(415)
+
+    data = request.get_json()
+
+    client_index = data.get("client_index")
+    name = data.get("name")
+
+    if not isinstance(client_index, int):
+        abort(400)
+    elif not isinstance(name, str):
+        abort(400)
+
+    response = await puppet_manager.get_info(
         client_index, 
-        center=center,
-        dist=min(search_dist, 500),
-        criterias=criteria_list
+        name=name
     )
+    json_response = jsonify(response)
 
-    if info_text_list == []:
-        await interaction.followup.send(
-            "No results were found.", 
-            ephemeral=True
-        )
-        return
+    return json_response
+
+
+@app.route("/control", methods=["POST"])
+async def toggle_connection() -> Response:
+    if not request.is_json:
+        abort(415)
+
+    data = request.get_json()
+
+    otp = data.get("otp")
+    if otp != totp.now():
+        return abort(401)
     
-    for message in info_text_list:
-        await interaction.followup.send(
-            message, 
-            ephemeral=True
-        )
-
-
-@bot.event
-async def on_ready() -> None:
-    print(f"{bot.user} is online!")
-
-    await bot.tree.sync()
+    response = await puppet_manager.toggle_connection()
+    json_response = jsonify(response)
     
-    asyncio.create_task(background_msg_loop())
-
-
-
-def start_flask_server() -> None:
-    app = Flask(__name__)
-
-    app.add_url_rule(
-        "/",
-        endpoint="respond",
-        view_func=lambda: Response(status=200)
-    )
-    server_thread = threading.Thread(
-        target=app.run,
-        kwargs={"host": "0.0.0.0", "port": PORT}
-    )
-    server_thread.start()
+    return json_response
+    
 
 
 
 async def main() -> None:
-    await Info.bind(SERVER_URL, len(channel_ids))
-    attack_listener.update()
-    storm_fort.update()
+    for client_config in get_config():
+        puppet_manager.new_client(client_config)
 
-    await attack_listener.start()
+    await puppet_manager.connect()
 
-    start_flask_server()
+    asgi_app = WsgiToAsgi(app)
+    port = int(os.environ.get("PORT", 10000))
 
-    async with bot:
-        await bot.start(TOKEN)
+    config = uvicorn.Config(asgi_app, host="0.0.0.0", port=port)
+    server = uvicorn.Server(config)
+    await server.serve()
 
-    await attack_listener.cancel()
+    print("Server process terminated.")
 
-    while True:
-        await asyncio.sleep(10)
 
 
 if __name__ == "__main__":
