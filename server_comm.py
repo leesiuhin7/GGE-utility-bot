@@ -1,8 +1,9 @@
 import httpx
 import asyncio
-from typing import Any
+import logging
+from typing import Any, Self
 
-from data_process import *
+import data_process as dp
 
 
 
@@ -21,7 +22,7 @@ async def post(
         return
     
     except Exception as e:
-        print("Error when sending post request", e)
+        logging.exception(f"An error occured: {e}")
         return
     
 
@@ -48,7 +49,7 @@ class Info:
             try:
                 server = response.json()
             except Exception as e:
-                print("Error while decoding server info", e)
+                logging.exception(f"An error occured: {e}")
                 continue
 
             if server is not None:
@@ -95,18 +96,20 @@ class AttackListener:
             try:
                 message_list, index = response.json()
             except Exception as e:
-                print("Error in attack listener while unpacking", e)
+                logging.exception(f"An error occured: {e}")
                 continue
 
             for message in message_list:
                 try:
-                    info_list = attack_warning.decode_message(message)
+                    info_list = dp.attack_warning.decode_message(
+                        message
+                    )
                 
                 except IndexError:
                     continue
                 
                 except Exception as e:
-                    print("Error in attack listener while decoding", e)
+                    logging.exception(f"An error occured: {e}")
                     continue
 
                 if info_list is None:
@@ -118,7 +121,7 @@ class AttackListener:
                     else:
                         self.prev_atk_ids[client_index].append(info[7])
 
-                    warning_msg = attack_warning.format_warning(info)
+                    warning_msg = dp.attack_warning.format_warning(info)
                     self.output.append((warning_msg, client_index))
 
 
@@ -148,61 +151,153 @@ class StormFort:
         self.url = f"{Info.url}/send"
 
 
+    class _Searcher:
+        
+        def __init__(
+            self,
+            *, 
+            storm_fort: "StormFort",
+            client_index: int,
+            center_x: int,
+            center_y: int,
+            end: int,
+            criterias: list[int]
+        ) -> None:
+            
+            self.current = 0
+            self.end = end
+
+            self.storm_fort = storm_fort
+
+            self.client_index = client_index
+            self.center_x = center_x
+            self.center_y = center_y
+            self.criterias = criterias
+
+
+        def __aiter__(self) -> Self:
+            return self
+        
+
+        async def __anext__(self) -> list[str]:
+            if self.current >= self.end:
+                raise StopAsyncIteration
+            
+            self.current += 1
+            
+            offsets = await self.storm_fort._generate_offsets(
+                self.current + 1
+            )
+            storm_fort_list: list[tuple[int, int, int]] = []
+            for offset in offsets:
+                i, j = offset[0] - 0.5, offset[1] - 0.5
+                x = int(self.center_x + i * 13)
+                y = int(self.center_y + j * 13)
+                bbox = (x, y, x + 12, y + 12)
+
+                storm_fort_list.extend(
+                    await self.storm_fort._get_storm_fort_data(
+                        self.client_index,
+                        bbox=bbox
+                    )
+                )
+
+            selected = []
+            for info in storm_fort_list:
+                if info[2] in self.criterias:
+                    selected.append(info)
+
+            sorted_list = dp.storm_fort.sort_storm_forts(
+                selected,
+                (self.center_x, self.center_y)
+            )
+            text = dp.storm_fort.format_storm_forts(
+                sorted_list, 
+                max_lines=40
+            )
+            return text
+
+
     async def search(
         self, 
-        client_index: int, 
+        client_index: int,
         center: str,
         dist: int,
         criterias: list[str]
-    ) -> list[str]:
+    ) -> "_Searcher | None":
         
-        new_criterias = storm_fort.translate_criterias(criterias)
+        """
+        Returns an async iterator that searches storm forts 
+        per iteration
+
+        :return: An async iterator that searches for storm forts
+        or None if input data is invalid
+        :rtype: StormFort._Searcher | None
+        """
+        
+        new_criterias = dp.storm_fort.translate_criterias(criterias)
 
         coords = center.split(":")
         if len(coords) != 2:
-            return []
-        else:
+            return None
+        
+        try:
             center_x = int(coords[0])
             center_y = int(coords[1])
-
-        n =  - (dist // -13) # ceiling division
-        if n <= 0:
-            return []
+        except ValueError:
+            return None
+        except Exception as e:
+            return None
         
+        n = - (dist // -13) # celiing division
+        if n <= 0:
+            return None
+        
+        return StormFort._Searcher(
+            storm_fort=self,
+            client_index=client_index,
+            center_x=center_x,
+            center_y=center_y,
+            end=n,
+            criterias=new_criterias
+        )
+    
+
+    async def _generate_offsets(
+        self, 
+        n: int
+    ) -> list[tuple[float, float]]:
+        """
+        In a (2n) by (2n) grid centered at (0, 0) 
+        made of 1x1 squares, 
+        return the center positions of all outermost squares
+
+        :param n: Half of the length of a (2n) by (2n) grid
+        :type n: int
+        :return: A list of center positions of all outermost squares
+        :rtype: list[tuple[float, float]
+        """
+
+        # Generates the top-right side of the grid
+        base = []
+        for x in range(0, n):
+            base.append((x + 0.5, n - 0.5))
+
+        for y in range(1, n):
+            base.append((n - 0.5, y + 0.5))
+
+        # Generates the entire grid (output) by mirroring
         offsets = []
-        for x in range(-n, n):
-            for y in range(-n, n):
-                offsets.append((x, y))
+        for base_offset in base:
+            for i, j in [
+                (-1, -1), (-1, 1), (1, -1), (1, 1)
+            ]:
+                offsets.append((
+                    base_offset[0] * i,
+                    base_offset[1] * j
+                ))
 
-        storm_fort_list = []
-        for i, j in offsets:
-            x = center_x + i * 13
-            y = center_y + j * 13
-            bbox = (x, y, x + 12, y + 12)
-
-            storm_fort_list.extend(
-                await self._get_storm_fort_data(
-                    client_index,
-                    bbox=bbox
-                )
-            )
-
-        selected_storm_forts = []
-
-        for storm_fort_info in storm_fort_list:
-            if storm_fort_info[2] in new_criterias:
-                selected_storm_forts.append(storm_fort_info)
-
-        sorted_storm_forts = storm_fort.sort_storm_forts(
-            selected_storm_forts,
-            (center_x, center_y)
-        )
-        text = storm_fort.format_storm_forts(
-            sorted_storm_forts, 
-            40
-        )
-        return text
-
+        return offsets
 
 
     async def _get_storm_fort_data(
@@ -236,17 +331,17 @@ class StormFort:
         try:
             response_list = response.json()
         except Exception as e:
-            print("Error in storm fort while decoding json", e)
+            logging.exception(f"An error occured: {e}")
             return []
         
         try:
-            storm_fort_list = storm_fort.decode_message(
+            storm_fort_list = dp.storm_fort.decode_message(
                 response_list[0]
             )
         except IndexError:
             return []
         except Exception as e:
-            print("Error in storm fort while decoding message", e)
+            logging.exception(f"An error occured: {e}")
             return []
 
         if storm_fort_list is None:

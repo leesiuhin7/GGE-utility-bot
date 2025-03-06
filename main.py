@@ -5,11 +5,13 @@ import asyncio
 import os
 import threading
 from flask import Flask, Response
+import logging
 
 from server_comm import AttackListener, StormFort, Info
 from _channel_ids import get_channel_ids
 
 
+logging.basicConfig(level=logging.INFO)
 
 TOKEN: str = os.environ.get("DISCORD_TOKEN", "")
 SERVER_URL: str = os.environ.get("SERVER_URL", "")
@@ -94,30 +96,40 @@ async def find_storm_forts(
     
     criteria_list = criterias.split(" ")
 
-    info_text_list = await storm_fort.search(
+    searcher = await storm_fort.search(
         client_index, 
         center=center,
         dist=min(search_dist, 500),
         criterias=criteria_list
     )
 
-    if info_text_list == []:
+    if searcher is None:
         await interaction.followup.send(
-            "No results were found.", 
+            "Invalid input data.", 
             ephemeral=True
         )
         return
     
-    for message in info_text_list:
+    no_result = True
+    
+    async for info_text_list in searcher:
+        for message in info_text_list:
+            no_result = False
+            await interaction.followup.send(
+                message, 
+                ephemeral=True
+            )
+    
+    if no_result:
         await interaction.followup.send(
-            message, 
-            ephemeral=True
+            "No results were found."
         )
+        return
 
 
 @bot.event
 async def on_ready() -> None:
-    print(f"{bot.user} is online!")
+    logging.info(f"{bot.user} is online!")
 
     await bot.tree.sync()
     
