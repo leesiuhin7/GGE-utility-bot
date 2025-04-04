@@ -204,7 +204,9 @@ class StormFort:
 
             selected = []
             for info in storm_fort_list:
-                if info[2] in self.criterias:
+                if info in selected:
+                    pass # Ignore info since it's repeated
+                elif info[2] in self.criterias:
                     selected.append(info)
 
             sorted_list = dp.storm_fort.sort_storm_forts(
