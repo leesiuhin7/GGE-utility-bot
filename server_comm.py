@@ -25,7 +25,7 @@ async def post(
         return
     
     except Exception as e:
-        logging.exception(f"An error occured: {e}")
+        logging.exception(f"An error occurred: {e}")
         return
     
 
@@ -125,7 +125,7 @@ class WSComm:
                 pass
 
             except Exception as e:
-                logging.exception(f"An error occured: {e}")
+                logging.exception(f"An error occurred: {e}")
                 pass
 
             logging.info(f"Connection closed with {self.url}")
@@ -152,7 +152,7 @@ class WSComm:
             pass
 
         except Exception as e:
-            logging.exception(f"An error occured: {e}")
+            logging.exception(f"An error occurred: {e}")
 
 
     async def _process_response_loop(self) -> None:
@@ -254,7 +254,7 @@ class Info:
             try:
                 server = response.json()
             except Exception as e:
-                logging.exception(f"An error occured: {e}")
+                logging.exception(f"An error occurred: {e}")
                 continue
 
             if server is not None:
@@ -306,13 +306,13 @@ class AttackListener:
             except WSComm.NoResponse:
                 continue
             except Exception as e:
-                logging.exception(f"An error occured: {e}")
+                logging.exception(f"An error occurred: {e}")
                 continue
 
             try:
                 message_list, index = json.loads(response)
             except Exception as e:
-                logging.exception(f"An error occured: {e}")
+                logging.exception(f"An error occurred: {e}")
                 continue
 
             for message in message_list:
@@ -346,7 +346,7 @@ class AttackListener:
         except IndexError:
             return
         except Exception as e:
-            logging.exception(f"An error occured: {e}")
+            logging.exception(f"An error occurred: {e}")
             return
 
         if info_list is None:
@@ -557,13 +557,13 @@ class StormFort:
         except WSComm.NoResponse:
             return []
         except Exception as e:
-            logging.exception(f"An error occured: {e}")
+            logging.exception(f"An error occurred: {e}")
             return []
         
         try:
             response_list = json.loads(response)
         except Exception as e:
-            logging.exception(f"An error occured: {e}")
+            logging.exception(f"An error occurred: {e}")
             return []
         
         try:
@@ -573,7 +573,7 @@ class StormFort:
         except IndexError:
             return []
         except Exception as e:
-            logging.exception(f"An error occured: {e}")
+            logging.exception(f"An error occurred: {e}")
             return []
 
         if storm_fort_list is None:
