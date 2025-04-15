@@ -44,7 +44,7 @@ class WSComm:
         self._waiters: dict[int, asyncio.Event] = {}
 
         self._recv_queue = asyncio.Queue()
-        self._responses: dict[int, Any]
+        self._responses: dict[int, Any] = {}
 
         self.connection_task: asyncio.Task | None = None
         self.response_task: asyncio.Task | None = None
@@ -119,9 +119,6 @@ class WSComm:
                 # Send message loop
                 while True:
                     request = await self._get_next_request()
-                    logging.debug(
-                        f"Sending message via websocket: {request}"
-                    )
                     await websocket.send(request)
                     request = None
 
@@ -150,9 +147,6 @@ class WSComm:
         
         try:
             async for message in websocket:
-                logging.debug(
-                    f"Receiving message via websocket: {message}"
-                )
                 await self._recv_queue.put(message)
 
         except websockets.ConnectionClosed:
