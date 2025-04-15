@@ -1,7 +1,11 @@
 import httpx
 import asyncio
 import logging
-from typing import Any, Self
+import websockets
+from websockets.asyncio.client import ClientConnection
+from websockets.exceptions import ConnectionClosed
+import json
+from typing import Any, Self, Optional
 
 import data_process as dp
 
@@ -26,11 +30,219 @@ async def post(
         return
     
 
+class WSComm:
+
+    def __init__(self, url: str) -> None:
+        self.url = url
+
+        self.reconnect_cooldown = 10
+
+        self.connection_closed = True
+
+        self._input_queue = asyncio.Queue()
+        self._retry_input_queue = asyncio.Queue()
+        self._waiters: dict[int, asyncio.Event] = {}
+
+        self._recv_queue = asyncio.Queue()
+        self._responses: dict[int, Any]
+
+        self.connection_task: asyncio.Task | None = None
+        self.response_task: asyncio.Task | None = None
+
+
+    class NoResponse(Exception):
+        """Raised if the server failed to respond to a request"""
+        pass
+
+
+    async def request(
+        self, 
+        method: str, 
+        input_data: Any,
+        timeout: Optional[float] = None
+    ) -> Any:
+        """
+        Sends a request to the server, waits until a response
+        is received or timeout
+
+        :raises NoResponse: If no response is received before timeout
+        :return: Returns the content of the response
+        :rtype: Any
+        """
+        waiter, request_id = self._register()
+
+        request_dict = {
+            "id": request_id,
+            "method": method,
+            "data": input_data
+        }
+        request = json.dumps(request_dict)
+        
+        # Send request and wait for response
+        await self._input_queue.put(request)
+        waiting_task = asyncio.create_task(waiter.wait())
+        done, pending = await asyncio.wait(
+            [waiting_task], 
+            timeout=timeout
+        )
+
+        if request_id not in self._responses:
+            raise WSComm.NoResponse
+        else:
+            return self._responses[request_id]
+        
+
+    async def start(self) -> None:
+        if self.connection_task is None:
+            self.connection_task = asyncio.create_task(
+                self._connection_loop()
+            )
+
+        if self.response_task is None:
+            self.response_task = asyncio.create_task(
+                self._process_response_loop()
+            )
+        
+
+    async def _connection_loop(self) -> None:
+        request = None
+        async for websocket in websockets.connect(self.url):
+            logging.info(f"Initiating connection with {self.url}")
+
+            self.connection_closed = False
+
+            try:
+                receiver_task = asyncio.create_task(
+                    self._receive_loop(websocket)
+                )
+
+                # Send message loop
+                while True:
+                    request = await self._get_next_request()
+                    logging.debug(
+                        f"Sending message via websocket: {request}"
+                    )
+                    await websocket.send(request)
+                    request = None
+
+            except websockets.ConnectionClosed:
+                pass
+
+            except Exception as e:
+                logging.exception(f"An error occured: {e}")
+                pass
+
+            logging.info(f"Connection closed with {self.url}")
+
+            self.connection_closed = True
+            
+            # Retry logic
+            if request is not None:
+                await self._retry_input_queue.put(request)
+
+            await asyncio.sleep(self.reconnect_cooldown)
+        
+
+    async def _receive_loop(
+        self,
+        websocket: ClientConnection
+    ) -> None:
+        
+        try:
+            async for message in websocket:
+                logging.debug(
+                    f"Receiving message via websocket: {message}"
+                )
+                await self._recv_queue.put(message)
+
+        except websockets.ConnectionClosed:
+            pass
+
+        except Exception as e:
+            logging.exception(f"An error occured: {e}")
+
+
+    async def _process_response_loop(self) -> None:
+        while True:
+            response = await self._recv_queue.get()
+            unpacked = self._unpack_response(response)
+            if unpacked is None:
+                continue
+
+            content, response_id = unpacked
+
+            # Shares the content of the response
+            self._responses[response_id] = content
+            self._release(response_id)
+
+
+    async def _get_next_request(self) -> Any:
+        if self._retry_input_queue.empty():
+            return await self._input_queue.get()
+        else:
+            return await self._retry_input_queue.get()
+
+
+    def _unpack_response(
+        self, 
+        response: str | bytes | bytearray
+    ) -> tuple[Any, int] | None:
+        
+        try:
+            data = json.loads(response)
+        except Exception as e:
+            return
+        
+        if not isinstance(data, dict):
+            return
+        
+        content = data.get("content")
+        response_id = data.get("id")
+
+        if not isinstance(response_id, int):
+            return
+        
+        return content, response_id
+
+
+    def _register(self) -> tuple[asyncio.Event, int]:
+        """
+        Registers an asyncio.Event instance (waiter) to an unique id
+
+        :return: A tuple of the waiter and its id
+        :rtype: tuple[asyncio.Event, int]
+        """
+        used_ids = set(self._waiters.keys())
+        request_id = 0
+        while request_id in used_ids:
+            request_id += 1
+
+        # Register an asyncio.Event to the id
+        waiter = asyncio.Event()
+        self._waiters[request_id] = waiter
+        return waiter, request_id
+    
+
+    def _release(self, waiter_id: int) -> None:
+        """
+        Removes an asyncio.Event instance (waiter) 
+        with a specific id and sets it
+
+        :param waiter_id: The id of the waiter
+        :type waiter_id: int
+        """
+        if waiter_id in self._waiters:
+            waiter = self._waiters.pop(waiter_id)
+            waiter.set()
+    
+
 
 class Info:
     servers: list[str] = []
     url: str = ""
     client_count: int = 0
+
+    ws_comm: WSComm
 
     @classmethod
     async def bind(cls, url: str, count: int) -> None:
@@ -56,10 +268,15 @@ class Info:
                 cls.servers.append(server)
 
 
+    @classmethod
+    def ws_bind(cls, ws_comm: WSComm) -> None:
+        cls.ws_comm = ws_comm
+
+
 
 class AttackListener:
 
-    def __init__(self, output: list) -> None:
+    def __init__(self, output: asyncio.Queue) -> None:
         self.output = output
         self.cancel_flag = False
 
@@ -88,9 +305,15 @@ class AttackListener:
                 "index": index,
                 "format": "%xt%gam"
             }
-            response = await post(self.url, data, timeout=10)
 
-            if response is None:
+            try:
+                response = await Info.ws_comm.request(
+                    "search", data, timeout=10
+                )
+            except WSComm.NoResponse:
+                continue
+            except Exception as e:
+                logging.exception(f"An error occured: {e}")
                 continue
 
             try:
@@ -100,29 +323,7 @@ class AttackListener:
                 continue
 
             for message in message_list:
-                try:
-                    info_list = dp.attack_warning.decode_message(
-                        message
-                    )
-                
-                except IndexError:
-                    continue
-                
-                except Exception as e:
-                    logging.exception(f"An error occured: {e}")
-                    continue
-
-                if info_list is None:
-                    continue
-
-                for info in info_list:
-                    if info[7] in self.prev_atk_ids[client_index]:
-                        continue
-                    else:
-                        self.prev_atk_ids[client_index].append(info[7])
-
-                    warning_msg = dp.attack_warning.format_warning(info)
-                    self.output.append((warning_msg, client_index))
+                await self.process_message(message, client_index)
 
 
     async def start(self) -> None:
@@ -137,6 +338,37 @@ class AttackListener:
         self.cancel_flag = True
         if blocking:
             await self.listener_tasks
+
+
+    async def process_message(
+        self, 
+        message: Any,
+        client_index: int
+    ) -> None:
+        
+        try:
+            info_list = dp.attack_warning.decode_message(
+                message
+            )
+        except IndexError:
+            return
+        except Exception as e:
+            logging.exception(f"An error occured: {e}")
+            return
+
+        if info_list is None:
+            return
+
+        for info in info_list:
+            if info[7] in self.prev_atk_ids[client_index]:
+                continue
+            elif info[6] == "": # is event attack
+                continue
+            else:
+                self.prev_atk_ids[client_index].append(info[7])
+
+            warning_msg = dp.attack_warning.format_warning(info)
+            await self.output.put((warning_msg, client_index))
 
 
 
@@ -325,9 +557,14 @@ class StormFort:
             "client_index": client_index,
             "message": message
         }
-        response = await post(self.url, data)
-
-        if response is None:
+        try:
+            response = await Info.ws_comm.request(
+                "send", data, timeout=10
+            )
+        except WSComm.NoResponse:
+            return []
+        except Exception as e:
+            logging.exception(f"An error occured: {e}")
             return []
         
         try:

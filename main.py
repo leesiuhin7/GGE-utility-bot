@@ -7,22 +7,27 @@ import threading
 from flask import Flask, Response
 import logging
 
-from server_comm import AttackListener, StormFort, Info
+from server_comm import AttackListener, StormFort, Info, WSComm
 from _channel_ids import get_channel_ids
 
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=int(os.environ.get("LOGGING_LEVEL", logging.INFO))
+)
 
 TOKEN: str = os.environ.get("DISCORD_TOKEN", "")
+
 SERVER_URL: str = os.environ.get("SERVER_URL", "")
+SERVER_WS_URL: str = os.environ.get("SERVER_WS_URL", "")
 
 PORT: int = int(os.environ.get("PORT", 10000))
 channel_ids = get_channel_ids()
 
-message_queue: list[tuple[str, int]] = []
+message_queue: asyncio.Queue[tuple[str, int]] = asyncio.Queue()
 
 attack_listener = AttackListener(message_queue)
 storm_fort = StormFort()
+ws_comm = WSComm(SERVER_WS_URL)
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -34,7 +39,7 @@ bot = commands.Bot(
 )
 
 async def send_message() -> None:
-    message, index = message_queue.pop(0)
+    message, index = await message_queue.get()
     channel = bot.get_channel(channel_ids[index][0])
 
     if not hasattr(channel, "send"):
@@ -45,10 +50,7 @@ async def send_message() -> None:
 
 async def background_msg_loop() -> None:
     while not bot.is_closed():
-        if len(message_queue) > 0:
-            await send_message()
-
-        await asyncio.sleep(1)
+        await send_message()
 
 
 @bot.tree.command(
@@ -155,10 +157,13 @@ def start_flask_server() -> None:
 
 async def main() -> None:
     await Info.bind(SERVER_URL, len(channel_ids))
+    Info.ws_bind(ws_comm)
+
     attack_listener.update()
     storm_fort.update()
 
     await attack_listener.start()
+    await ws_comm.start()
 
     start_flask_server()
 
