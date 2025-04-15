@@ -3,7 +3,6 @@ import asyncio
 import logging
 import websockets
 from websockets.asyncio.client import ClientConnection
-from websockets.exceptions import ConnectionClosed
 import json
 from typing import Any, Self, Optional
 
@@ -311,7 +310,7 @@ class AttackListener:
                 continue
 
             try:
-                message_list, index = response.json()
+                message_list, index = json.loads(response)
             except Exception as e:
                 logging.exception(f"An error occured: {e}")
                 continue
@@ -562,7 +561,7 @@ class StormFort:
             return []
         
         try:
-            response_list = response.json()
+            response_list = json.loads(response)
         except Exception as e:
             logging.exception(f"An error occured: {e}")
             return []
