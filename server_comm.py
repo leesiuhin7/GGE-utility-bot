@@ -277,9 +277,7 @@ class AttackListener:
 
 
     def update(self) -> None:
-        self.url = f"{Info.url}/search"
         self.count = Info.client_count
-
         self.prev_atk_ids = [[] for _ in range(self.count)]
 
 
@@ -373,7 +371,6 @@ class StormFort:
 
     def update(self) -> None:
         self.servers = Info.servers.copy()
-        self.url = f"{Info.url}/send"
 
 
     class _Searcher:
@@ -413,19 +410,23 @@ class StormFort:
             offsets = await self.storm_fort._generate_offsets(
                 self.current + 1
             )
-            storm_fort_list: list[tuple[int, int, int]] = []
+            tasks = []
             for offset in offsets:
                 i, j = offset[0] - 0.5, offset[1] - 0.5
                 x = int(self.center_x + i * 13)
                 y = int(self.center_y + j * 13)
                 bbox = (x, y, x + 12, y + 12)
 
-                storm_fort_list.extend(
-                    await self.storm_fort._get_storm_fort_data(
+                tasks.append(asyncio.create_task(
+                    self.storm_fort._get_storm_fort_data(
                         self.client_index,
                         bbox=bbox
                     )
-                )
+                ))
+
+            storm_fort_list: list[tuple[int, int, int]] = []
+            for task in tasks:
+                storm_fort_list.extend(await task)
 
             selected = []
             for info in storm_fort_list:
