@@ -9,25 +9,24 @@ from typing import Any, Self, Optional
 import data_process as dp
 
 
-
 async def post(
-    url: str, 
+    url: str,
     data: Any,
     **kwargs
 ) -> httpx.Response | None:
-    
+
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(url, json=data, **kwargs)
             return response
-        
+
     except httpx.RequestError:
         return
-    
+
     except Exception as e:
         logging.exception(f"An error occurred: {e}")
         return
-    
+
 
 class WSComm:
 
@@ -48,15 +47,13 @@ class WSComm:
         self.connection_task: asyncio.Task | None = None
         self.response_task: asyncio.Task | None = None
 
-
     class NoResponse(Exception):
         """Raised if the server failed to respond to a request"""
         pass
 
-
     async def request(
-        self, 
-        method: str, 
+        self,
+        method: str,
         input_data: Any,
         timeout: Optional[float] = None
     ) -> Any:
@@ -76,12 +73,12 @@ class WSComm:
             "data": input_data
         }
         request = json.dumps(request_dict)
-        
+
         # Send request and wait for response
         await self._input_queue.put(request)
         waiting_task = asyncio.create_task(waiter.wait())
         done, pending = await asyncio.wait(
-            [waiting_task], 
+            [waiting_task],
             timeout=timeout
         )
 
@@ -89,7 +86,6 @@ class WSComm:
             raise WSComm.NoResponse
         else:
             return self._responses[request_id]
-        
 
     async def start(self) -> None:
         if self.connection_task is None:
@@ -101,7 +97,6 @@ class WSComm:
             self.response_task = asyncio.create_task(
                 self._process_response_loop()
             )
-        
 
     async def _connection_loop(self) -> None:
         request = None
@@ -131,19 +126,18 @@ class WSComm:
             logging.info(f"Connection closed with {self.url}")
 
             self.connection_closed = True
-            
+
             # Retry logic
             if request is not None:
                 await self._retry_input_queue.put(request)
 
             await asyncio.sleep(self.reconnect_cooldown)
-        
 
     async def _receive_loop(
         self,
         websocket: ClientConnection
     ) -> None:
-        
+
         try:
             async for message in websocket:
                 await self._recv_queue.put(message)
@@ -153,7 +147,6 @@ class WSComm:
 
         except Exception as e:
             logging.exception(f"An error occurred: {e}")
-
 
     async def _process_response_loop(self) -> None:
         while True:
@@ -168,35 +161,32 @@ class WSComm:
             self._responses[response_id] = content
             self._release(response_id)
 
-
     async def _get_next_request(self) -> Any:
         if self._retry_input_queue.empty():
             return await self._input_queue.get()
         else:
             return await self._retry_input_queue.get()
 
-
     def _unpack_response(
-        self, 
+        self,
         response: str | bytes | bytearray
     ) -> tuple[Any, int] | None:
-        
+
         try:
             data = json.loads(response)
         except Exception as e:
             return
-        
+
         if not isinstance(data, dict):
             return
-        
+
         content = data.get("content")
         response_id = data.get("id")
 
         if not isinstance(response_id, int):
             return
-        
-        return content, response_id
 
+        return content, response_id
 
     def _register(self) -> tuple[asyncio.Event, int]:
         """
@@ -214,7 +204,6 @@ class WSComm:
         waiter = asyncio.Event()
         self._waiters[request_id] = waiter
         return waiter, request_id
-    
 
     def _release(self, waiter_id: int) -> None:
         """
@@ -227,7 +216,6 @@ class WSComm:
         if waiter_id in self._waiters:
             waiter = self._waiters.pop(waiter_id)
             waiter.set()
-    
 
 
 class Info:
@@ -260,11 +248,9 @@ class Info:
             if server is not None:
                 cls.servers.append(server)
 
-
     @classmethod
     def ws_bind(cls, ws_comm: WSComm) -> None:
         cls.ws_comm = ws_comm
-
 
 
 class AttackListener:
@@ -275,18 +261,16 @@ class AttackListener:
 
         self.update()
 
-
     def update(self) -> None:
         self.count = Info.client_count
         self.prev_atk_ids = [[] for _ in range(self.count)]
 
-
     async def attack_listener(
         self,
-        client_index: int, 
+        client_index: int,
         interval: float = 15
     ) -> None:
-        
+
         index = 10 ** 10
         while not self.cancel_flag:
             await asyncio.sleep(interval)
@@ -310,33 +294,32 @@ class AttackListener:
             try:
                 message_list, index = json.loads(response)
             except Exception as e:
-                logging.exception(f"An error occurred: {e}")
+                logging.exception(
+                    f"An error occurred: {e}, response: {response}"
+                )
                 continue
 
             for message in message_list:
                 await self.process_message(message, client_index)
 
-
     async def start(self) -> None:
         listeners = [
-            self.attack_listener(i) 
+            self.attack_listener(i)
             for i in range(self.count)
         ]
         self.listener_tasks = asyncio.gather(*listeners)
-    
 
     async def cancel(self, blocking: bool = True) -> None:
         self.cancel_flag = True
         if blocking:
             await self.listener_tasks
 
-
     async def process_message(
-        self, 
+        self,
         message: Any,
         client_index: int
     ) -> None:
-        
+
         try:
             info_list = dp.attack_warning.decode_message(
                 message
@@ -353,7 +336,7 @@ class AttackListener:
         for info in info_list:
             if info[7] in self.prev_atk_ids[client_index]:
                 continue
-            elif info[6] == "": # is event attack
+            elif info[6] == "":  # is event attack
                 continue
             else:
                 self.prev_atk_ids[client_index].append(info[7])
@@ -362,22 +345,19 @@ class AttackListener:
             await self.output.put((warning_msg, client_index))
 
 
-
 class StormFort:
 
     def __init__(self) -> None:
         self.update()
 
-
     def update(self) -> None:
         self.servers = Info.servers.copy()
 
-
     class _Searcher:
-        
+
         def __init__(
             self,
-            *, 
+            *,
             storm_fort: "StormFort",
             client_index: int,
             center_x: int,
@@ -385,7 +365,7 @@ class StormFort:
             end: int,
             criterias: list[int]
         ) -> None:
-            
+
             self.current = 0
             self.end = end
 
@@ -396,17 +376,15 @@ class StormFort:
             self.center_y = center_y
             self.criterias = criterias
 
-
         def __aiter__(self) -> Self:
             return self
-        
 
         async def __anext__(self) -> list[str]:
             if self.current >= self.end:
                 raise StopAsyncIteration
-            
+
             self.current += 1
-            
+
             offsets = await self.storm_fort._generate_offsets(
                 self.current + 1
             )
@@ -431,7 +409,7 @@ class StormFort:
             selected = []
             for info in storm_fort_list:
                 if info in selected:
-                    pass # Ignore info since it's repeated
+                    pass  # Ignore info since it's repeated
                 elif info[2] in self.criterias:
                     selected.append(info)
 
@@ -440,20 +418,18 @@ class StormFort:
                 (self.center_x, self.center_y)
             )
             text = dp.storm_fort.format_storm_forts(
-                sorted_list, 
+                sorted_list,
                 max_lines=40
             )
             return text
 
-
     async def search(
-        self, 
+        self,
         client_index: int,
         center: str,
         dist: int,
         criterias: list[str]
     ) -> "_Searcher | None":
-        
         """
         Returns an async iterator that searches storm forts 
         per iteration
@@ -462,13 +438,13 @@ class StormFort:
         or None if input data is invalid
         :rtype: StormFort._Searcher | None
         """
-        
+
         new_criterias = dp.storm_fort.translate_criterias(criterias)
 
         coords = center.split(":")
         if len(coords) != 2:
             return None
-        
+
         try:
             center_x = int(coords[0])
             center_y = int(coords[1])
@@ -476,11 +452,11 @@ class StormFort:
             return None
         except Exception as e:
             return None
-        
-        n = - (dist // -13) # celiing division
+
+        n = - (dist // -13)  # celiing division
         if n <= 0:
             return None
-        
+
         return StormFort._Searcher(
             storm_fort=self,
             client_index=client_index,
@@ -489,10 +465,9 @@ class StormFort:
             end=n,
             criterias=new_criterias
         )
-    
 
     async def _generate_offsets(
-        self, 
+        self,
         n: int
     ) -> list[tuple[float, float]]:
         """
@@ -527,16 +502,15 @@ class StormFort:
 
         return offsets
 
-
     async def _get_storm_fort_data(
         self,
         client_index: int,
         bbox: tuple[int, int, int, int]
     ) -> list[tuple[int, int, int]]:
-        
+
         if client_index >= len(self.servers):
             return []
-        
+
         server = self.servers[client_index]
 
         x1, y1, x2, y2 = bbox
@@ -560,13 +534,15 @@ class StormFort:
         except Exception as e:
             logging.exception(f"An error occurred: {e}")
             return []
-        
+
         try:
             response_list = json.loads(response)
         except Exception as e:
-            logging.exception(f"An error occurred: {e}")
+            logging.exception(
+                f"An error occurred: {e}, response: {response}"
+            )
             return []
-        
+
         try:
             storm_fort_list = dp.storm_fort.decode_message(
                 response_list[0]
@@ -574,10 +550,12 @@ class StormFort:
         except IndexError:
             return []
         except Exception as e:
-            logging.exception(f"An error occurred: {e}")
+            logging.exception(
+                f"An error occurred: {e}, response: {response}"
+            )
             return []
 
         if storm_fort_list is None:
             return []
-        
+
         return storm_fort_list
