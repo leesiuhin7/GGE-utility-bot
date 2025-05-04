@@ -124,10 +124,16 @@ async def find_storm_forts(
             )
 
     if no_result:
-        await interaction.followup.send("No results were found.")
+        await interaction.followup.send(
+            "No results were found.",
+            ephemeral=True
+        )
         return
     else:
-        await interaction.followup.send("Search completed.")
+        await interaction.followup.send(
+            "Search completed.",
+            ephemeral=True
+        )
 
 
 @bot.event
