@@ -39,10 +39,9 @@ class WSComm:
 
         self._input_queue = asyncio.Queue()
         self._retry_input_queue = asyncio.Queue()
-        self._waiters: dict[int, asyncio.Event] = {}
+        self._response_queues_dict: dict[int, asyncio.Queue] = {}
 
         self._recv_queue = asyncio.Queue()
-        self._responses: dict[int, Any] = {}
 
         self.connection_task: asyncio.Task | None = None
         self.response_task: asyncio.Task | None = None
@@ -65,7 +64,7 @@ class WSComm:
         :return: Returns the content of the response
         :rtype: Any
         """
-        waiter, request_id = self._register()
+        response_queue, request_id = self._register()
 
         request_dict = {
             "id": request_id,
@@ -76,16 +75,19 @@ class WSComm:
 
         # Send request and wait for response
         await self._input_queue.put(request)
-        waiting_task = asyncio.create_task(waiter.wait())
+        await_response_task = asyncio.create_task(
+            response_queue.get()
+        )
         done, pending = await asyncio.wait(
-            [waiting_task],
+            [await_response_task],
             timeout=timeout
         )
 
-        if request_id not in self._responses:
-            raise WSComm.NoResponse
+        # Raise WSComm.NoResponse if timeout
+        if done:
+            return await await_response_task
         else:
-            return self._responses[request_id]
+            raise WSComm.NoResponse
 
     async def start(self) -> None:
         if self.connection_task is None:
@@ -158,8 +160,7 @@ class WSComm:
             content, response_id = unpacked
 
             # Shares the content of the response
-            self._responses[response_id] = content
-            self._release(response_id)
+            await self._release(response_id, content)
 
     async def _get_next_request(self) -> Any:
         if self._retry_input_queue.empty():
@@ -188,34 +189,38 @@ class WSComm:
 
         return content, response_id
 
-    def _register(self) -> tuple[asyncio.Event, int]:
+    def _register(self) -> tuple[asyncio.Queue, int]:
         """
-        Registers an asyncio.Event instance (waiter) to an unique id
+        Registers an asyncio.Queue instance to an unique id
 
-        :return: A tuple of the waiter and its id
-        :rtype: tuple[asyncio.Event, int]
+        :return: A tuple of the queue and its id
+        :rtype: tuple[asyncio.Queue, int]
         """
-        used_ids = set(self._waiters.keys())
+        used_ids = set(self._response_queues_dict.keys())
         request_id = 0
         while request_id in used_ids:
             request_id += 1
 
-        # Register an asyncio.Event to the id
-        waiter = asyncio.Event()
-        self._waiters[request_id] = waiter
-        return waiter, request_id
+        # Register an asyncio.Queue to the id
+        response_queue = asyncio.Queue()
+        self._response_queues_dict[request_id] = response_queue
+        return response_queue, request_id
 
-    def _release(self, waiter_id: int) -> None:
+    async def _release(self, response_id: int, response: Any) -> None:
         """
-        Removes an asyncio.Event instance (waiter) 
-        with a specific id and sets it
+        Removes an asyncio.Queue instance with a specific id 
+        and put the response into it
 
-        :param waiter_id: The id of the waiter
-        :type waiter_id: int
+        :param response_id: The id of the queue
+        :type response_id: int
+        :param response: The data that will be added to the queue
+        :type response: Any
         """
-        if waiter_id in self._waiters:
-            waiter = self._waiters.pop(waiter_id)
-            waiter.set()
+        if response_id in self._response_queues_dict:
+            response_queue = self._response_queues_dict.pop(
+                response_id
+            )
+            await response_queue.put(response)
 
 
 class Info:

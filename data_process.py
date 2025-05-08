@@ -3,22 +3,20 @@ import math
 from typing import Any
 
 
-
 class _AttackWarning:
 
     def __init__(self) -> None:
         pass
 
-
     def decode_message(
-        self, 
+        self,
         message: str
     ) -> list[tuple[Any, ...]] | None:
-        
+
         start = message.find("{")
         if start == -1:
             return
-        
+
         data = json.loads(message[start:-1])
 
         info_list = []
@@ -33,7 +31,6 @@ class _AttackWarning:
                 info_list.append(info)
 
         return info_list
-    
 
     def format_warning(self, info: tuple[Any, ...]) -> str:
         message = " ".join([
@@ -44,16 +41,15 @@ class _AttackWarning:
             f"from \"{info[6]}\" ({info[3]}:{info[4]})"
         ])
         return message
-    
 
     def _unpack_data(
-        self, 
+        self,
         data: dict
     ) -> tuple[Any, ...] | None:
-        
+
         if not ("GS" in data or "GA" in data):
             return
-        
+
         atk_id = data["M"]["MID"]
         remaining_time = data["M"]["TT"] - data["M"]["PT"]
 
@@ -76,7 +72,6 @@ class _AttackWarning:
             atk_id
         )
         return info
-    
 
     def _seconds2compound(self, seconds: float) -> str:
         h = seconds // 3600
@@ -88,7 +83,6 @@ class _AttackWarning:
             return f"{m}m {s}s"
         else:
             return f"{s}s"
-        
 
 
 class _StormFort:
@@ -96,16 +90,15 @@ class _StormFort:
     def __init__(self) -> None:
         pass
 
-
     def decode_message(
         self,
         message: str
     ) -> list[tuple[int, int, int]] | None:
-        
+
         start = message.find("{")
         if start == -1:
             return
-        
+
         data = json.loads(message[start:-1])
 
         stort_fort_list = []
@@ -120,13 +113,12 @@ class _StormFort:
                 stort_fort_list.append(castle_info)
 
         return stort_fort_list
-    
 
     def translate_criterias(
         self,
         criterias: list[str]
     ) -> list[int]:
-        
+
         translated = []
         if "40" in criterias:
             translated.append(10)
@@ -146,13 +138,12 @@ class _StormFort:
             translated = [10, 11, 7, 12, 8, 13, 9, 14]
 
         return translated
-    
 
     def translate_strength_type(
-        self, 
+        self,
         strength_type: int
     ) -> str | None:
-        
+
         translate_dict = {
             10: "lvl 40",
             11: "lvl 50",
@@ -164,10 +155,9 @@ class _StormFort:
             14: "lvl 80 (strong)"
         }
         return translate_dict.get(strength_type)
-    
 
     def format_storm_forts(
-        self, 
+        self,
         storm_forts: list[tuple[int, int, int]],
         max_lines: int
     ) -> list[str]:
@@ -194,30 +184,28 @@ class _StormFort:
             output_texts.append("\n".join(info_texts))
 
         return output_texts
-    
 
     def sort_storm_forts(
-        self, 
+        self,
         storm_forts: list[tuple[int, int, int]],
         center: tuple[int, int]
     ) -> list[tuple[int, int, int]]:
-        
-        dist_func = lambda data: math.dist(center, data[:2])
-        
-        return sorted(storm_forts, key=dist_func)
 
+        def dist_func(data): return math.dist(center, data[:2])
+
+        return sorted(storm_forts, key=dist_func)
 
     def _unpack_data(
         self,
         data: list
     ) -> tuple[int, int, int] | None:
-        
+
         if data[0] != 25:
             return
-        
+
         if data[6] != 0:
             return
-        
+
         x_pos = data[1]
         y_pos = data[2]
         strength_type = data[5]
@@ -228,7 +216,6 @@ class _StormFort:
             strength_type
         )
         return info
-    
 
 
 attack_warning = _AttackWarning()
